@@ -1,10 +1,12 @@
 use {
-    maud::{html, Markup},
-    wini_macros::{cache, page},
+    cached::proc_macro::cached,
+    maud::{Markup, html},
+    wini_macros::{init_cache, page},
 };
 
-#[cache]
+#[init_cache]
 #[page]
+#[cached]
 pub async fn render() -> Markup {
     html! {
         button #hello {
