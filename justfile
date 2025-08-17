@@ -86,3 +86,6 @@ compile-ts:
 # Terminate process running on port `PORT` and start a new server
 clean-launch:
     @./scripts/launch.sh
+
+on-install:
+    @./scripts/on-install.sh
