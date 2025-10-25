@@ -1,7 +1,8 @@
 use {
     super::args::ProcMacroParameters,
     crate::utils::wini::{
-        files::get_js_or_css_files_in_current_dir,
+        files::{get_current_file_path, get_js_or_css_files_in_current_dir},
+        js_pkgs,
         params_from_itemfn::params_from_itemfn,
         result::is_ouput_ty_result,
     },
@@ -27,16 +28,41 @@ pub fn page(args: TokenStream, item: TokenStream) -> TokenStream {
     );
     original_function.sig.ident = new_name.clone();
 
-    let early_return_if_is_result_err = if is_ouput_ty_result(&original_function) {
-        quote!(?)
-    } else {
-        Default::default()
-    };
+    let current_file_path =
+        get_current_file_path().map_or_else(Default::default, |p| p.to_string_lossy().into_owned());
 
     let (arguments, param_names) = params_from_itemfn(&original_function);
 
-    let files_in_current_dir = get_js_or_css_files_in_current_dir().join(";");
-    let meta_headers = attributes.generate_all_headers();
+    let files_in_current_dir = get_js_or_css_files_in_current_dir();
+    let len_files_in_current_dir = files_in_current_dir.len();
+    let meta_headers = attributes.generate_all_extensions(false);
+    let js_pkgs = js_pkgs::handle(attributes.js_pkgs, quote!(files));
+
+    let call_inner_page = if is_ouput_ty_result(&original_function) {
+        quote!(
+            match #new_name(#(#param_names),*).await {
+                Ok(resp) => resp,
+                Err(err) => {
+                    let mut resp = (&err).into_response();
+
+                    let mut backtrace = crate::shared::wini::err::Backtrace::from(err);
+                    backtrace.trace.push(
+                        crate::shared::wini::err::Trace {
+                            file_path: #current_file_path,
+                            function_name: stringify!(#original_name),
+                        }
+                    );
+
+                    resp.extensions_mut().insert(backtrace);
+
+                    return resp
+                }
+            }
+        )
+    } else {
+        quote!(#new_name(#(#param_names),*).await)
+    };
+
 
     // Generate the output code
     let expanded = quote! {
@@ -44,32 +70,32 @@ pub fn page(args: TokenStream, item: TokenStream) -> TokenStream {
         #original_function
 
         #[allow(non_snake_case)]
-        pub async fn #original_name(#arguments) -> crate::shared::wini::err::ServerResult<axum::response::Response<axum::body::Body>> {
+        pub async fn #original_name(#arguments) -> axum::response::Response<axum::body::Body> {
             use {
-                axum::response::IntoResponse,
+                axum::response::{IntoResponse, Html},
                 itertools::Itertools,
+                std::borrow::Cow,
             };
 
-            const FILES_IN_CURRENT_DIR: &str = #files_in_current_dir;
+            const FILES_IN_CURRENT_DIR: [Cow<'static, str>; #len_files_in_current_dir] = [#(Cow::Borrowed(#files_in_current_dir)),*];
 
-            let html = #new_name(#(#param_names),*).await #early_return_if_is_result_err;
+            let html = #call_inner_page;
 
-            let files = html.linked_files.iter().join(";");
+            let linked_files = html.linked_files.into_iter().map(Cow::Owned);
 
-            let mut res = axum::response::IntoResponse::into_response(html);
+            let mut resp = axum::response::IntoResponse::into_response(Html(html.content.0));
 
-            res.headers_mut().insert(
-                "files",
-                axum::http::HeaderValue::from_str(&format!(
-                    "{FILES_IN_CURRENT_DIR};{files};",
-                )).unwrap()
-            );
+            let files: &mut crate::shared::wini::layer::Files = resp.extensions_mut().get_or_insert_default();
 
+            files.extend(FILES_IN_CURRENT_DIR);
+            files.extend(linked_files);
+
+            #js_pkgs
 
             // Modify header with meta tags in it
             #meta_headers
 
-            Ok(res)
+            resp
         }
     };
 
