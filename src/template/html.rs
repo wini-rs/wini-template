@@ -12,10 +12,8 @@ pub fn html(
             head {
                 meta charset="UTF-8";
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
-                meta name="description" content="PROJECT_NAME_TO_RESOLVE";
-                title { "PROJECT_NAME_TO_RESOLVE" }
+                (meta)
 
-                style { (include_str!("./always_loaded.css").trim_end()) }
                 @for style_sheet in style_sheets {
                     link rel="stylesheet" href=(style_sheet);
                 }
@@ -26,7 +24,6 @@ pub fn html(
                 @for script in scripts_files {
                     script src=(script) defer {}
                 }
-                (meta)
             }
             body {
                 (PreEscaped(s))

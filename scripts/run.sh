@@ -14,8 +14,8 @@ on_interrupt() {
 
 ./scripts/clean-js-without-ts.sh
 
-trap on_interrupt SIGINT
+trap on_interrupt SIGINT TERM EXIT
 
 watchexec -i "node_modules/**" -e 'ts' -r just compile-ts &
 watchexec -i "node_modules/**" -e 'scss' -r just compile-scss &
-watchexec -i "target/**" -i "node_modules/**" --stop-signal SIGTERM  -r "cargo run"
+watchexec -i "target/**" -i "node_modules/**" --stop-signal SIGTERM  -r "cargo run --features --no-default-features --features run-with-ssr"

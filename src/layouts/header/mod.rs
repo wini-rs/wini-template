@@ -1,15 +1,15 @@
 use {
     crate::shared::wini::err::ServerResult,
-    maud::{Markup, PreEscaped, html},
+    maud::{html, Markup},
     wini_macros::layout,
 };
 
 #[layout]
-pub async fn render(s: &str) -> ServerResult<Markup> {
+pub async fn render(s: Markup) -> ServerResult<Markup> {
     Ok(html! {
         header {
             "Welcome to Wini!"
         }
-        (PreEscaped(s))
+        (s)
     })
 }
