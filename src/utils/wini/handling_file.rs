@@ -1,18 +1,18 @@
 use {
     crate::shared::wini::{
+        cache::{AddCache, CacheCategory},
+        config::SERVER_CONFIG,
+        err::{ServerErrorKind, ServerResult},
         CSS_FILES,
         JS_FILES,
         PUBLIC_ENDPOINTS,
-        cache::{AddCache, CacheCategory},
-        config::SERVER_CONFIG,
-        err::{ServerError, ServerResult},
     },
     axum::{
         extract::Request,
         http::HeaderValue,
-        response::{IntoResponse, Response},
+        response::{AppendHeaders, IntoResponse, Response},
     },
-    hyper::{StatusCode, header::CONTENT_TYPE},
+    hyper::{header::CONTENT_TYPE, StatusCode},
     tower_http::services::ServeFile,
 };
 
@@ -28,7 +28,7 @@ pub async fn handle_file(req: Request) -> ServerResult<Response<axum::body::Body
         return Ok(ServeFile::new(format!("./public{path}"))
             .try_call(req)
             .await
-            .map_err(|_| ServerError::PublicRessourceNotFound(path.clone()))?
+            .map_err(|_| ServerErrorKind::PublicRessourceNotFound(path.clone()))?
             .into_response());
     }
 
@@ -64,12 +64,12 @@ fn css_into_response(file_content: &str) -> ServerResult<Response<axum::body::Bo
 /// Create a response from the content of the file and add the content_type header accordingly with
 /// the kind of content_type passed in parameter of this function.
 fn file_into_response(file_content: &str, kind: &str) -> ServerResult<Response<axum::body::Body>> {
-    let mut res = file_content.to_owned().into_response();
-    res.headers_mut()
-        .insert(
+    Ok((
+        AppendHeaders([(
             CONTENT_TYPE,
-            HeaderValue::from_str(&format!("text/{kind}"))?,
-        )
-        .expect("Valid header");
-    Ok(res)
+            HeaderValue::from_str(&format!("text/{kind}; charset=utf-8"))?,
+        )]),
+        Box::<str>::from(file_content),
+    )
+        .into_response())
 }

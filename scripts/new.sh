@@ -7,26 +7,13 @@ source ./scripts/yesno.sh
 
 set -euo pipefail
 
-
-# Check that `yq` exists.
-# This is needed to parse wini.toml
-if ! command -v "yq" &> /dev/null; then
-    error 'You need to have `yq` installed on your system to parse wini.toml'
-    info 'Install instruction are available here: https://github.com/mikefarah/yq#install'
-    info 'If you have nix installed, use `nix develop` (https://nixos.org/learn/)'
-    exit 1
-fi
-
 # Function to get the kind of file to create
 get_kind_new() {
     case "$1" in
-        'article'|'md'|'markdown')
-            echo 'markdown'
-            ;;
-        'layout'|'outlet'|'lay'|'l')
+        'layout'|'l')
             echo 'layout'
             ;;
-        'component'|'comp'|'c')
+        'component'|'c')
             echo 'component'
             ;;
         *)
@@ -37,28 +24,17 @@ get_kind_new() {
 
 
 get_directory_of_kind_new() {
-    case "$1" in
-        # In case it's in wini.toml
-        'layout'|'component'|'page')
-            case "$1" in 
-                'layout')
-                    yq ".path.layout" ./wini.toml
-                    ;;
-                'component')
-                    yq ".path.components" ./wini.toml
-                    ;;
-                'page')
-                    yq ".path.pages" ./wini.toml
-                    ;;
-            esac 
+    case "$1" in 
+        'layout')
+            yq ".path.layouts" ./wini.toml
             ;;
-        'markdown')
-            echo "$(yq ".path.pages" ./wini.toml)/articles"
+        'component')
+            yq ".path.components" ./wini.toml
             ;;
-        *)
-            echo 'pages'
+        'page')
+            yq ".path.pages" ./wini.toml
             ;;
-    esac
+    esac 
 }
 
 
@@ -68,7 +44,7 @@ src_directory_of_kind_new="./src/${directory_of_kind_new#./}"
 
 
 
-info "Going to create a new page based on the template of '$kind'"
+info "Going to create a new '$kind' from template"
 ask "Which path should it be located at: " 
 read -r path
 
@@ -77,7 +53,7 @@ relative_path="$src_directory_of_kind_new/$path"
 [ -e "$relative_path" ] && { error "Already exists."; exit 1; }
 
 
-ask "Creating a new page at '\e[1m$relative_path\e[0m' ? $(yesno y) "
+ask "Create a new page at '\e[1m$relative_path\e[0m' ? $(yesno y) "
 read -r yn
 
 if [ "$yn" = 'N' ] || [ "$yn" = 'n' ]; then

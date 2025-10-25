@@ -1,33 +1,43 @@
 use {
     crate::{
-        layout::header,
+        layouts::header,
         pages,
-        shared::wini::PORT,
+        shared::wini::{
+            layer::MetaLayerBuilder,
+            PORT,
+        },
         template,
         utils::wini::{
             cache,
             handling_file::{self},
         },
     },
-    axum::{Router, middleware, routing::get},
+    axum::{middleware, routing::get, Router},
     log::info,
+    std::collections::HashMap,
     tower_http::compression::CompressionLayer,
 };
 
 
 pub async fn start() {
-    // Support for compression
-    let comression_layer = CompressionLayer::new();
-
-
     // The main router of the application is defined here
-    let app = Router::new()
+    let app = Router::<()>::new()
         .route("/", get(pages::hello::render))
         .layer(middleware::from_fn(header::render))
+        .layer(
+            MetaLayerBuilder::default()
+                .default_meta(HashMap::from_iter([
+                        ("title", "PROJECT_NAME_TO_RESOLVE".into()),
+                        ("description", "PROJECT_NAME_TO_RESOLVE".into()),
+                        ("lang", "en".into()),
+                ]))
+                .build()
+                .expect("Failed to build MetaLayer"),
+        )
         .layer(middleware::from_fn(template::template))
         .layer(middleware::from_fn(cache::html_middleware))
         .route("/{*wildcard}", get(handling_file::handle_file))
-        .layer(comression_layer);
+        .layer(CompressionLayer::new());
 
 
     // Start the server

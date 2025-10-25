@@ -1,6 +1,6 @@
 use {
     std::collections::HashMap,
-    syn::{meta::ParseNestedMeta, ExprArray, LitStr},
+    syn::{ExprArray, Lit, LitStr, meta::ParseNestedMeta},
 };
 
 /// The arguments expected in attribute
@@ -24,17 +24,16 @@ pub struct ProcMacroParameters {
     pub img: Option<String>,
     /// Other meta tags
     pub other_meta: Option<HashMap<String, String>>,
+    /// Add JS packages
+    pub js_pkgs: Option<Vec<String>>,
 }
 
-macro_rules! generate_header_functions {
+macro_rules! generate_extension_function {
     ($name:ident) => {
         pub fn $name(&self) -> proc_macro2::TokenStream {
             if let Some(value) = &self.$name {
                 quote::quote! {
-                    res.headers_mut().insert(
-                        concat!("meta-", stringify!($name)),
-                        axum::http::HeaderValue::from_str(#value).unwrap(),
-                    );
+                    meta_tags.insert(stringify!($name), std::borrow::Cow::Borrowed(#value));
                 }
             } else {
                 quote::quote!()
@@ -43,18 +42,30 @@ macro_rules! generate_header_functions {
     };
 }
 
-macro_rules! generate_combined_headers_function {
+macro_rules! generate_combined_extensions_function {
     ($($field:ident),*) => {
-        pub fn generate_all_headers(&self) -> proc_macro2::TokenStream {
+        pub fn generate_all_extensions(&self, is_parts: bool) -> proc_macro2::TokenStream {
             // Generate all individual TokenStreams
             $(
                 let $field = self.$field();
             )*
 
             // Combine them in a single quote
-            quote::quote! {
-                {
-                    $(#$field)*
+            if is_parts {
+                quote::quote! {
+                    {
+                        let meta_tags: &mut crate::shared::wini::layer::Tags = resp_parts.extensions.get_or_insert_default();
+
+                        $(#$field)*
+                    }
+                }
+            } else {
+                quote::quote! {
+                    {
+                        let meta_tags: &mut crate::shared::wini::layer::Tags = resp.extensions_mut().get_or_insert_default();
+
+                        $(#$field)*
+                    }
                 }
             }
         }
@@ -63,7 +74,7 @@ macro_rules! generate_combined_headers_function {
 
 
 impl ProcMacroParameters {
-    generate_combined_headers_function!(
+    generate_combined_extensions_function!(
         title,
         description,
         robots,
@@ -75,27 +86,27 @@ impl ProcMacroParameters {
         other_meta
     );
 
-    generate_header_functions!(title);
+    generate_extension_function!(title);
 
-    generate_header_functions!(description);
+    generate_extension_function!(description);
 
-    generate_header_functions!(robots);
+    generate_extension_function!(robots);
 
-    generate_header_functions!(author);
+    generate_extension_function!(author);
 
-    generate_header_functions!(site_name);
+    generate_extension_function!(site_name);
 
-    generate_header_functions!(lang);
+    generate_extension_function!(lang);
 
-    generate_header_functions!(img);
+    generate_extension_function!(img);
 
     pub fn keywords(&self) -> proc_macro2::TokenStream {
         if let Some(value) = &self.keywords {
-            let str_value = value.join(", ");
+            let keyword_joined = value.join(", ");
             quote::quote! {
-                res.headers_mut().insert(
-                    "meta-keywords"
-                    HeaderValue::from_str(#str_value).unwrap(),
+                meta_tags.insert(
+                    "keywords",
+                    std::borrow::Cow::Borrowed(#keyword_joined),
                 );
             }
         } else {
@@ -109,15 +120,17 @@ impl ProcMacroParameters {
                 .iter()
                 .map(|(meta_name, meta_value)| {
                     quote::quote! {
-                        res.headers_mut().insert(
-                            concat!("meta-", #meta_name),
-                            HeaderValue::from_str(#meta_value).unwrap(),
+                        meta_tags.insert(
+                            #meta_name,
+                            std::borrow::Cow::Borrowed(#meta_value),
                         );
                     }
                 })
                 .collect::<Vec<_>>();
 
-            quote::quote! { #(#quotes)* }
+            quote::quote! {
+                #(#quotes)*
+            }
         } else {
             quote::quote!()
         }
@@ -129,37 +142,74 @@ impl ProcMacroParameters {
         if let Some(ident) = meta.path.get_ident() {
             match ident.to_string().as_str() {
                 "other_meta" => {
-                    meta.parse_nested_meta(|meta| {
-                        let key = meta
-                            .path
-                            .get_ident()
-                            .ok_or(meta.error("Expected an ident"))?
-                            .to_string();
-                        let value = meta.value()?.parse::<LitStr>()?.value();
+                    let lit_fake_array: ExprArray = meta.value()?.parse()?;
+
+                    for elem in lit_fake_array.elems {
+                        // Should be ExprAssign `"str" = "str"`
+                        let syn::Expr::Assign(expr) = elem else {
+                            panic!(
+                                r#"Expected an `ExprAssign` with the following format `"str" = "str"`"#
+                            )
+                        };
+
+                        let syn::Expr::Lit(syn::ExprLit {
+                            attrs: _,
+                            lit: Lit::Str(left),
+                        }) = *expr.left
+                        else {
+                            panic!("Expected left part (meta name) to be a `&'static str` ");
+                        };
+
+                        let syn::Expr::Lit(syn::ExprLit {
+                            attrs: _,
+                            lit: Lit::Str(right),
+                        }) = *expr.right
+                        else {
+                            panic!("Expected right part (meta content) to be a `&'static str` ");
+                        };
 
                         if let Some(other_meta) = &mut self.other_meta {
-                            other_meta.insert(key, value);
+                            other_meta.insert(left.value(), right.value());
                         } else {
-                            self.other_meta = Some(HashMap::from([(key, value)]))
+                            self.other_meta = Some(HashMap::from([(left.value(), right.value())]))
                         }
+                    }
 
-                        Ok(())
-                    })
+                    Ok(())
                 },
                 "keywords" => {
                     let lit_array: ExprArray = meta.value()?.parse()?;
-                    let mut vec_elements = vec![];
+                    let mut vec_elements = Vec::with_capacity(lit_array.elems.len());
                     for elem in lit_array.elems {
-                        if let syn::Expr::Lit(lit) = elem {
-                            if let syn::Lit::Str(lit_str) = lit.lit {
-                                vec_elements.push(lit_str.value());
-                            }
+                        if let syn::Expr::Lit(lit) = elem &&
+                            let syn::Lit::Str(lit_str) = lit.lit
+                        {
+                            vec_elements.push(lit_str.value());
                         }
                     }
 
                     // Assign it to the correct key
                     match ident.to_string().as_str() {
                         "keywords" => self.keywords = Some(vec_elements),
+                        _ => unreachable!("Already matched."),
+                    }
+
+                    Ok(())
+                },
+                "js_pkgs" => {
+                    let lit_array: ExprArray = meta.value()?.parse()?;
+                    let mut vec_elements = Vec::with_capacity(lit_array.elems.len());
+                    for elem in lit_array.elems {
+                        if let syn::Expr::Lit(lit) = elem &&
+                            let syn::Lit::Str(lit_str) = lit.lit
+                        {
+                            vec_elements.push(lit_str.value());
+                        }
+                    }
+
+                    // Assign it to the correct key
+                    match ident.to_string().as_str() {
+                        "js_pkgs" => self.js_pkgs = Some(vec_elements),
                         _ => unreachable!("Already matched."),
                     }
 
