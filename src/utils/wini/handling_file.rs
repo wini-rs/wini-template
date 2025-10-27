@@ -10,7 +10,7 @@ use {
     axum::{
         extract::Request,
         http::HeaderValue,
-        response::{AppendHeaders, IntoResponse, Response},
+        response::{IntoResponse, Response},
     },
     hyper::{header::CONTENT_TYPE, StatusCode},
     tower_http::services::ServeFile,
@@ -65,10 +65,10 @@ fn css_into_response(file_content: &str) -> ServerResult<Response<axum::body::Bo
 /// the kind of content_type passed in parameter of this function.
 fn file_into_response(file_content: &str, kind: &str) -> ServerResult<Response<axum::body::Body>> {
     Ok((
-        AppendHeaders([(
+        [(
             CONTENT_TYPE,
             HeaderValue::from_str(&format!("text/{kind}; charset=utf-8"))?,
-        )]),
+        )],
         Box::<str>::from(file_content),
     )
         .into_response())
